@@ -1,0 +1,336 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// ENUMS
+// ============================================
+
+enum PlanoType {
+  ESSENCIAL
+  PROFISSIONAL
+  EMPRESARIAL
+  PERSONALIZADO
+}
+
+enum PapelType {
+  OWNER
+  ADMIN
+  FINANCEIRO
+  PROFISSIONAL
+  RECEPCAO
+  AUDITOR
+}
+
+enum TipoContaType {
+  PAGAR
+  RECEBER
+}
+
+enum StatusContaType {
+  PENDENTE
+  PARCIAL
+  PAGA
+  CANCELADA
+  VENCIDA
+}
+
+enum TipoLancamentoType {
+  ENTRADA
+  SAIDA
+}
+
+enum TipoCategoriaType {
+  RECEITA
+  DESPESA
+  INVESTIMENTO
+}
+
+enum TipoMovimentacaoType {
+  ENTRADA
+  SAIDA
+  AJUSTE
+}
+
+// ============================================
+// MODELS
+// ============================================
+
+model Tenant {
+  id            String   @id @default(cuid())
+  nome          String
+  cnpj          String   @unique
+  plano         PlanoType @default(PROFISSIONAL)
+  ativo         Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relacionamentos
+  unidades      Unidade[]
+  usuarios      Usuario[]
+  clientes      Cliente[]
+  fornecedores  Fornecedor[]
+  contas        Conta[]
+  lancamentos   Lancamento[]
+  categorias    Categoria[]
+  centrosCusto  CentroCusto[]
+  produtos      Produto[]
+  movimentacoes MovimentacaoEstoque[]
+  auditLogs     AuditLog[]
+
+  @@map("tenants")
+}
+
+model Unidade {
+  id        String   @id @default(cuid())
+  tenantId  String
+  nome      String
+  cnpj      String?
+  endereco  String?
+  telefone  String?
+  email     String?
+  ativo     Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relacionamentos
+  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  lancamentos Lancamento[]
+
+  @@index([tenantId])
+  @@map("unidades")
+}
+
+model Usuario {
+  id        String    @id @default(cuid())
+  tenantId  String
+  email     String    @unique
+  senha     String
+  nome      String
+  papel     PapelType
+  ativo     Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  // Relacionamentos
+  tenant             Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contasCriadas      Conta[]      @relation("ContaCriadaPor")
+  lancamentosCriados Lancamento[] @relation("LancamentoCriadoPor")
+  auditLogs          AuditLog[]
+
+  @@index([tenantId])
+  @@map("usuarios")
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  tenantId   String
+  userId     String?
+  action     String
+  entity     String
+  entityId   String?
+  details    Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  // Relacionamentos
+  tenant  Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  usuario Usuario? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([tenantId, createdAt])
+  @@map("audit_logs")
+}
+
+model Conta {
+  id                     String           @id @default(cuid())
+  tenantId               String
+  tipo                   TipoContaType
+  descricao              String
+  valor                  Decimal          @db.Decimal(15, 2)
+  dataVencimento         DateTime
+  dataPagamento          DateTime?
+  status                 StatusContaType  @default(PENDENTE)
+  observacoes            String?
+  numeroParcela          Int?
+  totalParcelas          Int?
+  contaPaiId             String?
+  categoriaId            String?
+  fornecedorId           String?
+  clienteId              String?
+  criadoPorId            String
+  conciliadoEm           DateTime?
+  transacaoBancariaId    String?
+  transacaoBancariaHash  String?
+  anexos                 Json?
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
+
+  // Relacionamentos
+  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  categoria   Categoria?   @relation(fields: [categoriaId], references: [id], onDelete: SetNull)
+  fornecedor  Fornecedor?  @relation(fields: [fornecedorId], references: [id], onDelete: SetNull)
+  cliente     Cliente?     @relation(fields: [clienteId], references: [id], onDelete: SetNull)
+  criadoPor   Usuario      @relation("ContaCriadaPor", fields: [criadoPorId], references: [id])
+  lancamentos Lancamento[]
+  contaPai    Conta?       @relation("ContaParcelas", fields: [contaPaiId], references: [id], onDelete: SetNull)
+  parcelas    Conta[]      @relation("ContaParcelas")
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([dataVencimento])
+  @@map("contas")
+}
+
+model Lancamento {
+  id          String              @id @default(cuid())
+  tenantId    String
+  unidadeId   String
+  contaId     String?
+  descricao   String
+  valor       Decimal             @db.Decimal(15, 2)
+  data        DateTime
+  tipo        TipoLancamentoType
+  criadoPorId String
+  observacoes String?
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  // Relacionamentos
+  tenant    Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  unidade   Unidade @relation(fields: [unidadeId], references: [id], onDelete: Cascade)
+  conta     Conta?  @relation(fields: [contaId], references: [id], onDelete: SetNull)
+  criadoPor Usuario @relation("LancamentoCriadoPor", fields: [criadoPorId], references: [id])
+
+  @@index([tenantId])
+  @@index([tenantId, data])
+  @@map("lancamentos")
+}
+
+model Cliente {
+  id        String   @id @default(cuid())
+  tenantId  String
+  nome      String
+  cpfCnpj   String?
+  email     String?
+  telefone  String?
+  endereco  String?
+  ativo     Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relacionamentos
+  tenant Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contas Conta[]
+
+  @@index([tenantId])
+  @@map("clientes")
+}
+
+model Fornecedor {
+  id          String   @id @default(cuid())
+  tenantId    String
+  nome        String
+  cnpj        String?
+  email       String?
+  telefone    String?
+  endereco    String?
+  observacoes String?
+  ativo       Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relacionamentos
+  tenant Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contas Conta[]
+
+  @@index([tenantId])
+  @@map("fornecedores")
+}
+
+model Categoria {
+  id        String             @id @default(cuid())
+  tenantId  String
+  nome      String
+  tipo      TipoCategoriaType
+  cor       String?
+  icone     String?
+  ativo     Boolean            @default(true)
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+
+  // Relacionamentos
+  tenant Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contas Conta[]
+
+  @@index([tenantId])
+  @@map("categorias")
+}
+
+model CentroCusto {
+  id        String   @id @default(cuid())
+  tenantId  String
+  nome      String
+  descricao String?
+  ativo     Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relacionamentos
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("centros_custo")
+}
+
+model Produto {
+  id             String   @id @default(cuid())
+  tenantId       String
+  nome           String
+  descricao      String?
+  sku            String?
+  codigoBarras   String?
+  preco          Decimal  @db.Decimal(15, 2)
+  custo          Decimal? @db.Decimal(15, 2)
+  estoque        Int      @default(0)
+  estoqueMinimo  Int?
+  unidade        String?
+  ativo          Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Relacionamentos
+  tenant         Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  movimentacoes  MovimentacaoEstoque[]
+
+  @@index([tenantId])
+  @@index([sku])
+  @@index([codigoBarras])
+  @@map("produtos")
+}
+
+model MovimentacaoEstoque {
+  id         String                @id @default(cuid())
+  tenantId   String
+  produtoId  String
+  tipo       TipoMovimentacaoType
+  quantidade Int
+  motivo     String?
+  createdAt  DateTime              @default(now())
+
+  // Relacionamentos
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  produto Produto @relation(fields: [produtoId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("movimentacoes_estoque")
+}
